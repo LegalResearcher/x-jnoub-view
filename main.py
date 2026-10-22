@@ -83,6 +83,21 @@ def tweet_link(tweet_id):
     return f"https://x.com/{X_HANDLE}/status/{tweet_id}"
 
 
+def ids_from_jina_profile():
+    """مصدر وسيط: يقرأ صفحة X عبر Jina Reader لتجاوز حجب عناوين GitHub Actions."""
+    url = f"https://r.jina.ai/http://x.com/{X_HANDLE}"
+    r = requests.get(url, timeout=45)
+    if r.status_code != 200:
+        raise RuntimeError(f"كود الحالة {r.status_code}")
+    ids = set()
+    pattern = rf"(?:https?://(?:x|twitter)\.com/)?{re.escape(X_HANDLE)}/status/(\d+)"
+    for value in re.findall(pattern, r.text, re.I):
+        ids.add(int(value))
+    if not ids:
+        raise RuntimeError("لم توجد روابط منشورات في نتيجة Jina")
+    return ids
+
+
 def ids_from_x_profile():
     """المصدر المباشر: صفحة الحساب العامة على X دون الاعتماد على Nitter."""
     url = f"https://x.com/{X_HANDLE}"
@@ -151,7 +166,11 @@ def ids_from_nitter(host):
 
 def fetch_links():
     """روابط التغريدات الأصلية للحساب، من الأقدم للأحدث. يجرّب المصادر بالترتيب."""
-    sources = [("x-profile", ids_from_x_profile), ("syndication", ids_from_syndication)]
+    sources = [
+        ("jina:x-profile", ids_from_jina_profile),
+        ("x-profile", ids_from_x_profile),
+        ("syndication", ids_from_syndication),
+    ]
     sources += [(f"nitter:{h}", (lambda h=h: ids_from_nitter(h))) for h in NITTER_INSTANCES]
 
     errors = []
