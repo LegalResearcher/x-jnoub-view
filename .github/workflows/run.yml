@@ -1,8 +1,6 @@
 name: X Views (Browser)
 
 on:
-  schedule:
-    - cron: "7,32,57 * * * *"
   workflow_dispatch:
 
 permissions:
