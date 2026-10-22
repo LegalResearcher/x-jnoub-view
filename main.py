@@ -368,7 +368,8 @@ class BrowserSender:
         )
         if submit is None:
             raise RuntimeError("زر تسجيل الدخول غير موجود")
-        submit.click()
+        self._dismiss_popups()
+        submit.click(force=True)
         p.wait_for_load_state("networkidle")
 
         still = p.locator("input[type='password']")
