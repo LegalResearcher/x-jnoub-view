@@ -85,7 +85,8 @@ def tweet_link(tweet_id):
 
 def ids_from_jina_profile():
     """مصدر وسيط: يقرأ صفحة X عبر Jina Reader لتجاوز حجب عناوين GitHub Actions."""
-    url = f"https://r.jina.ai/http://x.com/{X_HANDLE}"
+    # معامل متغير لمنع Jina من إعادة نسخة قديمة من صفحة الحساب.
+    url = f"https://r.jina.ai/http://x.com/{X_HANDLE}?_={int(time.time())}"
     r = requests.get(url, timeout=45)
     if r.status_code != 200:
         raise RuntimeError(f"كود الحالة {r.status_code}")
