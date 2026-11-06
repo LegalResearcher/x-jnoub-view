@@ -4,8 +4,9 @@ import tempfile
 import unittest
 
 from account_rotation import select_account
-from main import run_send
+from main import X_HANDLES, pull_once, run_send
 from processing_state import load_failures, load_successes
+from retry_link import is_allowed_link
 
 
 class FakeSender:
@@ -104,6 +105,40 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual((account, username, password), (1, "user-1", "pass-1"))
         with open(path, encoding="utf-8") as file:
             self.assertEqual(json.load(file), {"next_account": 2})
+
+    def test_initial_poll_keeps_latest_post_per_source_account(self):
+        import main
+        discovered = [
+            f"https://x.com/{handle}/status/{number}"
+            for handle, number in ((X_HANDLES[0], 100), (X_HANDLES[0], 200),
+                                   (X_HANDLES[1], 150), (X_HANDLES[2], 175))
+        ]
+        original_fetch = main.fetch_all_links
+        original_processed = main.PROCESSED_PATH
+        original_links = main.LINKS_PATH
+        try:
+            main.fetch_all_links = lambda: discovered
+            main.PROCESSED_PATH = os.path.join(self.state, "processed_links.txt")
+            main.LINKS_PATH = os.path.join(self.state, "telegram_links.txt")
+            # Ensure this is a clean first run, independent of setUp's send queue.
+            os.remove(main.LINKS_PATH)
+            selected = pull_once()
+            self.assertEqual(selected, [
+                f"https://x.com/{X_HANDLES[0]}/status/200",
+                f"https://x.com/{X_HANDLES[1]}/status/150",
+                f"https://x.com/{X_HANDLES[2]}/status/175",
+            ])
+            with open(main.PROCESSED_PATH, encoding="utf-8") as file:
+                self.assertEqual(set(file.read().splitlines()), set(discovered))
+        finally:
+            main.fetch_all_links = original_fetch
+            main.PROCESSED_PATH = original_processed
+            main.LINKS_PATH = original_links
+
+    def test_retry_accepts_only_configured_source_accounts(self):
+        for handle in X_HANDLES:
+            self.assertTrue(is_allowed_link(f"https://x.com/{handle}/status/123"))
+        self.assertFalse(is_allowed_link("https://x.com/other_account/status/123"))
 
 
 if __name__ == "__main__":

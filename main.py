@@ -24,8 +24,9 @@ LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")        # طابور �
 PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")   # روابط تم سحبها
 DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")             # روابط تم تنفيذها
 
-X_HANDLE = "aljanoubvoice2"   # حساب تويتر/X (بدون @)
-# مرايا Nitter لقراءة الحساب (قابلة للتغيير من متغير البيئة NITTER_INSTANCES مفصولة بفواصل)
+X_HANDLES = ("aljanoubvoice2", "hasadalyoum1", "shmsan_news")
+X_HANDLE = X_HANDLES[0]  # التوافق مع أي استخدام قديم للاسم المفرد
+# مرايا Nitter لقراءة الحسابات (قابلة للتغيير من متغير البيئة NITTER_INSTANCES مفصولة بفواصل)
 NITTER_INSTANCES = [
     h.strip()
     for h in os.environ.get(
@@ -83,17 +84,17 @@ def save_attempts(data):
 
 
 # ══════════════ السحب ══════════════
-def tweet_link(tweet_id):
-    return f"https://x.com/{X_HANDLE}/status/{tweet_id}"
+def tweet_link(tweet_id, handle=X_HANDLE):
+    return f"https://x.com/{handle}/status/{tweet_id}"
 
 
-def ids_from_jina_profile():
+def ids_from_jina_profile(handle=X_HANDLE):
     """مصدر وسيط: يقرأ صفحة X عبر Jina Reader لتجاوز حجب عناوين GitHub Actions."""
     urls = (
-        f"https://r.jina.ai/http://x.com/{X_HANDLE}?lang=en",
-        f"https://r.jina.ai/http://x.com/{X_HANDLE}?_={int(time.time())}",
+        f"https://r.jina.ai/http://x.com/{handle}?lang=en",
+        f"https://r.jina.ai/http://x.com/{handle}?_={int(time.time())}",
     )
-    pattern = rf"(?:https?://(?:x|twitter)\.com/)?{re.escape(X_HANDLE)}/status/(\d+)"
+    pattern = rf"(?:https?://(?:x|twitter)\.com/)?{re.escape(handle)}/status/(\d+)"
     errors = []
     for url in urls:
         try:
@@ -110,14 +111,14 @@ def ids_from_jina_profile():
     raise RuntimeError(" | ".join(errors))
 
 
-def ids_from_x_profile():
+def ids_from_x_profile(handle=X_HANDLE):
     """المصدر المباشر: صفحة الحساب العامة على X دون الاعتماد على Nitter."""
-    url = f"https://x.com/{X_HANDLE}"
+    url = f"https://x.com/{handle}"
     r = requests.get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
         raise RuntimeError(f"كود الحالة {r.status_code}")
     ids = []
-    pattern = rf"/{re.escape(X_HANDLE)}/status/(\d+)"
+    pattern = rf"/{re.escape(handle)}/status/(\d+)"
     for value in re.findall(pattern, r.text, re.I):
         if value not in ids:
             ids.append(value)
@@ -126,9 +127,9 @@ def ids_from_x_profile():
     return {int(value) for value in ids}
 
 
-def ids_from_syndication():
+def ids_from_syndication(handle=X_HANDLE):
     """المصدر 1: واجهة العرض المضمّن (Embed) من تويتر."""
-    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{X_HANDLE}"
+    url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}"
     r = requests.get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
         raise RuntimeError(f"كود الحالة {r.status_code}")
@@ -146,7 +147,7 @@ def ids_from_syndication():
             continue
         t = (e.get("content") or {}).get("tweet") or {}
         user = ((t.get("user") or {}).get("screen_name") or "").lower()
-        if user != X_HANDLE.lower():
+        if user != handle.lower():
             continue
         if t.get("retweeted_status") or t.get("in_reply_to_status_id_str"):
             continue  # نتجاهل إعادة التغريد والردود
@@ -155,9 +156,9 @@ def ids_from_syndication():
     return ids
 
 
-def ids_from_nitter(host):
+def ids_from_nitter(host, handle=X_HANDLE):
     """المصدر 2: RSS من مرآة Nitter."""
-    url = f"https://{host}/{X_HANDLE}/rss"
+    url = f"https://{host}/{handle}/rss"
     r = requests.get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
         raise RuntimeError(f"كود الحالة {r.status_code}")
@@ -170,20 +171,23 @@ def ids_from_nitter(host):
         title = re.sub(r"<!\[CDATA\[|\]\]>", "", tm.group(1)).strip() if tm else ""
         if title.startswith("RT by") or title.startswith("R to"):
             continue  # إعادة تغريد أو رد
-        m = re.search(rf"/{re.escape(X_HANDLE)}/status/(\d+)", item, re.I)
+        m = re.search(rf"/{re.escape(handle)}/status/(\d+)", item, re.I)
         if m:
             ids.add(int(m.group(1)))
     return ids
 
 
-def fetch_links():
-    """روابط التغريدات الأصلية للحساب، من الأقدم للأحدث. يجرّب المصادر بالترتيب."""
+def fetch_links(handle=X_HANDLE):
+    """روابط التغريدات الأصلية لحساب واحد، من الأقدم للأحدث."""
     sources = [
-        ("jina:x-profile", ids_from_jina_profile),
-        ("x-profile", ids_from_x_profile),
-        ("syndication", ids_from_syndication),
+        ("jina:x-profile", lambda: ids_from_jina_profile(handle)),
+        ("x-profile", lambda: ids_from_x_profile(handle)),
+        ("syndication", lambda: ids_from_syndication(handle)),
     ]
-    sources += [(f"nitter:{h}", (lambda h=h: ids_from_nitter(h))) for h in NITTER_INSTANCES]
+    sources += [
+        (f"nitter:{h}", (lambda h=h: ids_from_nitter(h, handle)))
+        for h in NITTER_INSTANCES
+    ]
 
     errors = []
     for name, fn in sources:
@@ -193,16 +197,37 @@ def fetch_links():
             errors.append(f"{name}: {type(e).__name__}: {e}")
             continue
         if ids:
-            log(f"📡 المصدر: {name} ({len(ids)} تغريدة)")
-            return [tweet_link(i) for i in sorted(ids)]
+            log(f"📡 المصدر: {name} | الحساب @{handle} ({len(ids)} تغريدة)")
+            return [tweet_link(i, handle) for i in sorted(ids)]
         errors.append(f"{name}: لا توجد تغريدات")
 
     raise RuntimeError("فشلت كل المصادر | " + " | ".join(errors))
 
 
+def fetch_all_links():
+    """يجمع روابط الحسابات المحددة؛ فشل مصدر حساب لا يمنع معالجة الحسابات الأخرى."""
+    links = []
+    errors = []
+    for handle in X_HANDLES:
+        try:
+            links.extend(fetch_links(handle))
+        except Exception as error:
+            errors.append(f"@{handle}: {type(error).__name__}: {error}")
+            log(f"⚠️ تعذر سحب الحساب @{handle}: {type(error).__name__}")
+    if not links:
+        raise RuntimeError("فشل سحب كل الحسابات | " + " | ".join(errors))
+    # أرقام منشورات X تتضمن وقت النشر، لذا يعطينا ترتيبها ترتيبًا زمنيًا تقريبيًا.
+    return sorted(set(links), key=lambda link: int(link.rsplit("/", 1)[-1]))
+
+
+def source_handle(link):
+    match = re.search(r"(?:x|twitter)\.com/([^/]+)/status/\d+", link, re.I)
+    return match.group(1).lower() if match else None
+
+
 def pull_once():
     first_run = not os.path.exists(PROCESSED_PATH)
-    discovered = fetch_links()
+    discovered = fetch_all_links()
     if not discovered:
         log("⏹️ لم يتم العثور على منشورات في الصفحة.")
         return []
@@ -214,13 +239,17 @@ def pull_once():
         return []
 
     if first_run:
-        # أول تشغيل: الأحدث فقط، وباقي ما في الصفحة يُسجَّل كمعالج دون تنفيذ
-        append_lines(LINKS_PATH, [new_links[-1]])
+        # أول تشغيل: أحدث منشور لكل حساب، والبقية تسجل كمعالجة دون تنفيذ.
+        latest_by_handle = {}
+        for link in new_links:
+            latest_by_handle[source_handle(link)] = link
+        latest_links = [latest_by_handle[h] for h in X_HANDLES if h in latest_by_handle]
+        append_lines(LINKS_PATH, latest_links)
         append_lines(PROCESSED_PATH, new_links)
-        log(f"🆕 أول تشغيل، أُضيف أحدث رابط فقط: {new_links[-1]}")
-        if len(new_links) > 1:
-            log(f"ℹ️ تم تجاهل {len(new_links) - 1} منشور أقدم.")
-        return [new_links[-1]]
+        log(f"🆕 أول تشغيل، أُضيف أحدث رابط لكل حساب: {len(latest_links)} رابط.")
+        if len(new_links) > len(latest_links):
+            log(f"ℹ️ تم تجاهل {len(new_links) - len(latest_links)} منشور أقدم.")
+        return latest_links
 
     # الأشغال العادية: كل الجديد بالترتيب (الأقدم أولاً)
     append_lines(LINKS_PATH, new_links)
@@ -680,7 +709,7 @@ def main():
         mode = "api"
 
     account_label = str(account_number) if account_number is not None else "API_KEY"
-    log(f"🚀 بدء التشغيل | الحساب: {account_label} | الحساب المصدر: @{X_HANDLE} | الوضع: {mode}")
+    log(f"🚀 بدء التشغيل | الحساب: {account_label} | الحسابات المصدر: {', '.join('@' + h for h in X_HANDLES)} | الوضع: {mode}")
 
     processed_before_pull = set(read_lines(PROCESSED_PATH))
     fetch_failed = False

@@ -5,18 +5,22 @@ import os
 import re
 import sys
 from account_rotation import select_account
-from main import BrowserSender, send_order
+from main import BrowserSender, X_HANDLES, send_order
 from processing_state import MAX_SUCCESSES_PER_LINK, can_process, load_failures, load_successes, record_result
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
-X_HANDLE = "aljanoubvoice2"
-LINK_PATTERN = re.compile(rf"^https?://(?:www\.)?(?:x|twitter)\.com/{re.escape(X_HANDLE)}/status/(\d+)/?$", re.I)
+LINK_PATTERN = re.compile(r"^https?://(?:www\.)?(?:x|twitter)\.com/([^/]+)/status/(\d+)/?$", re.I)
+
+def is_allowed_link(link: str) -> bool:
+    match = LINK_PATTERN.fullmatch(link)
+    return bool(match and match.group(1).lower() in {handle.lower() for handle in X_HANDLES})
 
 def retry_one_link(link: str, sender) -> str:
     link = link.strip()
-    if not LINK_PATTERN.fullmatch(link):
-        raise ValueError(f"الرابط يجب أن يكون منشوراً من حساب X @{X_HANDLE}")
+    if not is_allowed_link(link):
+        allowed = "، ".join("@" + handle for handle in X_HANDLES)
+        raise ValueError(f"الرابط يجب أن يكون منشوراً من أحد حسابات X: {allowed}")
     successes = load_successes(STATE_DIR)
     failures = load_failures(STATE_DIR)
     if not can_process(link, STATE_DIR, successes, failures):
@@ -32,8 +36,9 @@ def retry_one_link(link: str, sender) -> str:
 
 def main() -> int:
     link = os.environ.get("TARGET_LINK", "").strip()
-    if not LINK_PATTERN.fullmatch(link):
-        print(f"❌ رابط غير صالح؛ يجب أن يكون من @{X_HANDLE}", file=sys.stderr)
+    if not is_allowed_link(link):
+        allowed = "، ".join("@" + handle for handle in X_HANDLES)
+        print(f"❌ رابط غير صالح؛ يجب أن يكون من أحد الحسابات: {allowed}", file=sys.stderr)
         return 2
     api_key = os.environ.get("API_KEY", "").strip()
     try:
